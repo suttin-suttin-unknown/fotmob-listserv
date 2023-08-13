@@ -10,15 +10,6 @@ from operator import itemgetter
 
 NO_CACHE_HEADER = {"Cache-Control": "no-cache"}
 
-BASE_URL = "https://www.fotmob.com/api"
-
-LEAGUES_URL = BASE_URL + "/leagues?"
-MATCHES_URL = BASE_URL + "/matches?"
-TEAMS_URL = BASE_URL + "/teams?"
-PLAYERS_URL = BASE_URL + "/players?"
-MATCH_DETAILS_URL = BASE_URL + "/matchDetails?"
-
-SEARCH_URL = "https://apigw.fotmob.com/searchapi/"
 
 DATE_REGEX = r"(20\d{2})(\d{2})(\d{2})"
 
@@ -47,9 +38,10 @@ class _RouteHandler:
             raise ValueError(f"Function {function_name} not found")
             
 class _ResponseHandler:
-    def __call__(self, url, params={}):
+    def __call__(self, url, params={}, headers=NO_CACHE_HEADER):
         try:
-            response = requests.get(url, params=params, headers=NO_CACHE_HEADER)
+            # use session?
+            response = requests.get(url, params=params, headers=headers)
             response.raise_for_status()
             if hasattr(response, "json"):
                 return response.json()
@@ -279,7 +271,6 @@ class League(_Response):
     name = property(get_name)
     country = property(get_country)
     player_stats = property(get_player_stats)
-
     latest_totw_round_url = property(_get_latest_totw_round_url)
 
 
