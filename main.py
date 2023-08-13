@@ -1,0 +1,366 @@
+import logging
+import requests
+import re
+
+from datetime import datetime
+from dataclasses import dataclass, asdict
+
+from operator import itemgetter
+
+
+NO_CACHE_HEADER = {"Cache-Control": "no-cache"}
+
+BASE_URL = "https://www.fotmob.com/api"
+
+LEAGUES_URL = BASE_URL + "/leagues?"
+MATCHES_URL = BASE_URL + "/matches?"
+TEAMS_URL = BASE_URL + "/teams?"
+PLAYERS_URL = BASE_URL + "/players?"
+MATCH_DETAILS_URL = BASE_URL + "/matchDetails?"
+
+SEARCH_URL = "https://apigw.fotmob.com/searchapi/"
+
+DATE_REGEX = r"(20\d{2})(\d{2})(\d{2})"
+
+TZ_LA = "America/Los_Angeles"
+
+# DEFAULT_URL_TABLE = {
+#     "match_details_url": MATCH_DETAILS_URL,
+#     "leagues_url": LEAGUES_URL,
+#     "matches_url": MATCHES_URL,
+#     "players_url": PLAYERS_URL,
+#     "search_url": SEARCH_URL,
+#     "teams_url": TEAMS_URL,
+# }
+
+logger = logging.getLogger(__name__)
+
+
+def check_date(date):
+    return 
+
+
+class App:
+    def something(self):
+        self.cache = {}
+
+
+class _RouteHandler:
+    def __init__(self):
+        pass
+
+    def route_request(self, function_name, *args, **kwargs):
+        if hasattr(self, function_name):
+            function = getattr(self, function_name)
+            if callable(function):
+                return function(*args, **kwargs)
+            else:
+                raise ValueError(f"{function_name} is not callable")
+        else:
+            raise ValueError(f"Function {function_name} not found")
+            
+class _ResponseHandler:
+    def __call__(self, url, params={}):
+        try:
+            response = requests.get(url, params=params, headers=NO_CACHE_HEADER)
+            response.raise_for_status()
+            if hasattr(response, "json"):
+                return response.json()
+            else:
+                raise ValueError(f"No JSON returned from API. See: {response.text}")
+        except requests.HTTPError as error:
+            logger.error(f"Error: {error}")
+        except requests.exceptions.JSONDecodeError as error:
+            logger.error(f"Error: {error}")
+        except Exception as error:
+            logger.error(f"Error: {error}")
+        
+        return {}
+
+
+class API:
+    """
+    Singleton class for interacting with fotmob api. Routes mapped to object methods.
+
+    Restful routes covered:
+
+    GET matches - https://www.fotmob.com/api/matches?date={}
+    GET leagues - https://www.fotmob.com/api/leagues?id={}&tab={}&type={}&timeZone={}
+    GET teams - https://www.fotmob.com/api/teams?id={}&tab={}&type={}&timeZone={}
+    GET players - https://www.fotmob.com/api/playerData?id={}
+    GET matchDetails - https://www.fotmob.com/api/matchDetails?matchId={}
+
+    Search route:
+
+    GET search - https://apigw.fotmob.com/searchapi/suggest?term={}&lang={}
+    """
+    _instance = None
+    
+    _BASE_URL = "https://www.fotmob.com/api"
+    _SEARCH_URL = "https://apigw.fotmob.com/searchapi/"
+
+    response_handler = _ResponseHandler()
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+            
+    def get_matches(self, date):
+        return self.response_handler(self._BASE_URL + f"/matches?date={date}")
+    
+    def get_match_details(self, match_id):
+        return self.response_handler(self._BASE_URL + f"/matchDetails?matchId={match_id}")
+    
+    def get_player(self, player_id):
+        return self.response_handler(self._BASE_URL + f"/playerData?id={player_id}")
+    
+    def get_league(self, league_id, time_zone=TZ_LA):
+        return self.response_handler(self._BASE_URL + "/leagues", params={
+            "id": league_id,
+            "tab": "overview",
+            "type": "league",
+            "timeZone": time_zone
+        })
+            
+    def get_team(self, team_id, time_zone=TZ_LA):
+        return self.response_handler(self._BASE_URL + "/teams", params={
+            "id": team_id,
+            "tab": "overview",
+            "type": "league",
+            "timeZone": time_zone
+        })
+    
+    # TODO: Schedule searches - for players not added yet
+    def search(self, term):
+        return self.response_handler(f"{self._SEARCH_URL}suggest?term={term}")
+
+
+class _Response:
+    """
+    Private super class for converting expected json responses from API to attributed objects.
+
+    General pattern:
+
+    raw_json (stored in self._response_json) => treated_json (to instantiate subclasses) => properties for readability.
+    """
+    _response_json = {}
+
+    def __init__(self, response_json):
+        self._response_json = response_json
+        self._creation_time = datetime.now()
+        self._fotmob_id = None
+
+    @classmethod
+    def from_fotmob_id(cls, fotmob_id):
+        raise NotImplementedError("Classmethod 'from_fotmob_id' not implemented.")
+
+
+default_metrics_list = [
+    "Top scorer", 
+    "Assists", 
+    "Goals + Assists", 
+    "FotMob rating", 
+    "Goals per 90",
+    "Expected goals (xG)", 
+    "Expected goals (xG) per 90", 
+    "Expected goals on target (xGOT)",
+    "Shots on target per 90", 
+    "Shots per 90", 
+    "Accurate passes per 90", 
+    "Big chances created",
+    "Chances created", 
+    "Accurate long balls per 90", 
+    "Expected assist (xA)",
+    "Expected assist (xA) per 90", 
+    "xG + xA per 90", 
+    "Successful dribbles per 90",
+    "Big chances missed", 
+    "Penalties won", 
+    "Successful tackles per 90", 
+    "Interceptions per 90",
+    "Clearances per 90", 
+    "Blocks per 90", 
+    "Penalties conceded", 
+    "Possession won final 3rd per 90",
+    "Clean sheets", 
+    "Save percentage", 
+    "Saves per 90", 
+    "Goals prevented", 
+    "Goals conceded per 90",
+    "Fouls committed per 90", 
+    "Yellow cards", 
+    "Red cards"
+]
+
+
+class StatFactory:
+    def __call__(self, metric, player, team, value):
+        if metric not in default_metrics_list:
+            raise ValueError(f"Metric {metric} not recognized as part of fotmob schema.")
+        
+        return PlayerStat(metric=metric, player=player, team=team, value=value)
+
+
+@dataclass(frozen=True)
+class PlayerStat:
+    metric: str 
+    player: str
+    team: str
+    value: str
+
+    def as_array(self):
+        return [self.metric, self.player, self.team, self.value]
+
+    def as_dict(self):
+        return asdict(self)
+        
+
+class League(_Response):
+    __slots__ = ["_name", "_country", "_transfers_json", "_matches_json", "_player_stats_json"]
+
+    def __init__(self, response_json):
+        super().__init__(response_json)
+        # perhaps validate instead
+        self._fotmob_id = response_json["details"]["id"]
+        self._name = response_json["details"]["name"]
+        self._country = response_json["details"]["country"]
+        self._transfers_json = response_json.get("transfers", {}).get("data")
+        self._matches_json = response_json.get("matches", {}).get("allMatches")
+        self._stats_json = response_json.get("stats", {})
+        self._player_stats_json = self._stats_json.get("players")
+
+    @classmethod
+    def from_fotmob_id(cls, fotmob_id):
+        api = API()
+        league = api.get_league(fotmob_id)
+        return cls(league)
+
+    def get_league_id(self):
+        return self._fotmob_id
+
+    def get_name(self):
+        return self._name
+    
+    def get_country(self):
+        return self._country
+    
+    def _get_player_stats_json(self):
+        stats = {}
+        for stat_json in self._player_stats_json:
+            metric = stat_json["header"]
+            stats[metric] = []
+            for entry in stat_json["topThree"]:
+                main_keys = ["name", "teamName", "value"]
+                stats[metric].append(dict(zip(main_keys, itemgetter(*main_keys)(entry))))
+        return stats
+    
+    def _get_player_stats(self):
+        for (metric, entries) in self._get_player_stats_json().items():
+            for entry in entries:
+                yield PlayerStat(**{
+                    "metric": metric,
+                    "player": entry["name"],
+                    "team": entry["teamName"],
+                    "value": entry["value"]
+                })
+                
+    def get_player_stats(self):
+        return self._get_player_stats()
+    
+    def get_player_stats_table(self, snake_case=True):
+        table = {}
+        for stat in self.player_stats:
+            if table.get(stat.metric):
+                table[stat.metric].append(stat.as_dict())
+            else:
+                table[stat.metric] = [stat.as_dict()]
+        
+        if snake_case:
+            snake_case_table = {}
+            for k, v in table.items():
+                sc_k = "_".join(w.lower() for w in re.findall(r"\w+", k))
+                snake_case_table[sc_k] = v
+            return {"player_stats": snake_case_table}
+        
+        return {"Player stats": table}
+    
+    def _get_latest_totw_round_url(self):
+        return self._stats_json["seasonStatLinks"][0]["TotwRoundsLink"]
+    
+    league_id = property(get_league_id)
+    name = property(get_name)
+    country = property(get_country)
+    player_stats = property(get_player_stats)
+
+    latest_totw_round_url = property(_get_latest_totw_round_url)
+
+
+def get_stat_list_string(metric, entries):
+    entry_string = "\n".join([f"{entry['player']} ({entry['team']}) - {entry['value']}" for entry in entries])
+    banner = "================================================"
+    stat_list_string = f"{banner}\n{metric}\n\n{entry_string}\n{banner}"
+    return stat_list_string
+
+def print_player_stats(league):
+    player_stats = league.get_player_stats_table()["player_stats"]
+    for (metric, entries) in player_stats.items():
+        print(f"{get_stat_list_string(metric, entries)}\n")
+
+# Calls in here probably good to cache
+def get_league_last_totw(league):
+    totw_dict = {}
+
+    logger.info(f"Getting latest {league.name} TOTW link...")
+    latest_totw_url = requests.get(league.latest_totw_round_url).json()["last"]["link"]
+    latest_round_number = int(latest_totw_url[-1])
+    totw_dict["round_number"] = latest_round_number
+
+    logger.info(f"Getting latest {league.name} TOTW...")
+    totw = requests.get(latest_totw_url).json()["players"]
+    main_keys = ["assists", "goals", "matchId", "motm", "name", "participantId", "rating", "roundNumber"]
+    totw_dict["players"] = [dict(zip(main_keys, itemgetter(*main_keys)(player))) for player in totw]
+
+    return totw_dict
+
+
+    
+
+
+class Player(_Response):
+    def __init__(self, response_json):
+        super().__init__(response_json)
+
+
+class Match(_Response):
+    def __init__(self, response_json):
+        super().__init__(response_json)
+
+
+
+
+
+class Team(_Response):
+    def __init__(self, response_json):
+        super().__init__(response_json)
+
+
+
+class MatchDetails(_Response):
+    def __init__(self, response_json):
+        super().__init__(response_json)
+
+
+class Query:
+    pass
+
+
+class View:
+    pass
+
+
+if __name__ == "__main__":
+    from pprint import pprint
+    print("Main: ")
+    api = API()
+
