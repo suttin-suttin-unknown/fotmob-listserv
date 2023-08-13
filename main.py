@@ -24,20 +24,7 @@ DATE_REGEX = r"(20\d{2})(\d{2})(\d{2})"
 
 TZ_LA = "America/Los_Angeles"
 
-# DEFAULT_URL_TABLE = {
-#     "match_details_url": MATCH_DETAILS_URL,
-#     "leagues_url": LEAGUES_URL,
-#     "matches_url": MATCHES_URL,
-#     "players_url": PLAYERS_URL,
-#     "search_url": SEARCH_URL,
-#     "teams_url": TEAMS_URL,
-# }
-
 logger = logging.getLogger(__name__)
-
-
-def check_date(date):
-    return 
 
 
 class App:
@@ -302,10 +289,12 @@ def get_stat_list_string(metric, entries):
     stat_list_string = f"{banner}\n{metric}\n\n{entry_string}\n{banner}"
     return stat_list_string
 
+
 def print_player_stats(league):
     player_stats = league.get_player_stats_table()["player_stats"]
     for (metric, entries) in player_stats.items():
         print(f"{get_stat_list_string(metric, entries)}\n")
+
 
 # Calls in here probably good to cache
 def get_league_last_totw(league):
@@ -324,9 +313,6 @@ def get_league_last_totw(league):
     return totw_dict
 
 
-    
-
-
 class Player(_Response):
     def __init__(self, response_json):
         super().__init__(response_json)
@@ -337,13 +323,9 @@ class Match(_Response):
         super().__init__(response_json)
 
 
-
-
-
 class Team(_Response):
     def __init__(self, response_json):
         super().__init__(response_json)
-
 
 
 class MatchDetails(_Response):
@@ -363,4 +345,3 @@ if __name__ == "__main__":
     from pprint import pprint
     print("Main: ")
     api = API()
-
