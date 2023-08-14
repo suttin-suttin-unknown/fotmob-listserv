@@ -4,15 +4,14 @@ import math
 import json
 import time
 
-import requests
-
-from cachetools import cached, TTLCache
-
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from enum import Enum
-
 from operator import itemgetter
+
+import requests
+
+from cachetools import cached, TTLCache
 
 NO_CACHE_HEADER = {"Cache-Control": "no-cache"}
 DATE_REGEX = r"(20\d{2})(\d{2})(\d{2})"
