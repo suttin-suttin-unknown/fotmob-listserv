@@ -1,18 +1,21 @@
 import logging
-import requests
 import re
+import math
+import json
+import time
+
+import requests
+
+from cachetools import cached, TTLCache
 
 from datetime import datetime
 from dataclasses import dataclass, asdict
+from enum import Enum
 
 from operator import itemgetter
 
-
 NO_CACHE_HEADER = {"Cache-Control": "no-cache"}
-
-
 DATE_REGEX = r"(20\d{2})(\d{2})(\d{2})"
-
 TZ_LA = "America/Los_Angeles"
 
 logger = logging.getLogger(__name__)
@@ -131,8 +134,14 @@ class _Response:
         self._fotmob_id = None
 
     @classmethod
+    def _dump(cls):
+        raise NotImplementedError("'_dump' not implemented.")
+
+    @classmethod
     def from_fotmob_id(cls, fotmob_id):
-        raise NotImplementedError("Classmethod 'from_fotmob_id' not implemented.")
+        raise NotImplementedError("'from_fotmob_id' not implemented.")
+    
+
 
 
 default_metrics_list = [
@@ -199,7 +208,7 @@ class League(_Response):
     __slots__ = ["_name", "_country", "_transfers_json", "_matches_json", "_player_stats_json"]
 
     def __init__(self, response_json):
-        super().__init__(response_json)
+
         # perhaps validate instead
         self._fotmob_id = response_json["details"]["id"]
         self._name = response_json["details"]["name"]
@@ -208,6 +217,7 @@ class League(_Response):
         self._matches_json = response_json.get("matches", {}).get("allMatches")
         self._stats_json = response_json.get("stats", {})
         self._player_stats_json = self._stats_json.get("players")
+        super().__init__(response_json)
 
     @classmethod
     def from_fotmob_id(cls, fotmob_id):
@@ -288,13 +298,14 @@ def print_player_stats(league):
 
 
 # Calls in here probably good to cache
+@cached(cache=TTLCache(maxsize=100, ttl=3600))
 def get_league_last_totw(league):
     totw_dict = {}
 
     logger.info(f"Getting latest {league.name} TOTW link...")
     latest_totw_url = requests.get(league.latest_totw_round_url).json()["last"]["link"]
     latest_round_number = int(latest_totw_url[-1])
-    totw_dict["round_number"] = latest_round_number
+    totw_dict["round"] = latest_round_number
 
     logger.info(f"Getting latest {league.name} TOTW...")
     totw = requests.get(latest_totw_url).json()["players"]
@@ -303,10 +314,154 @@ def get_league_last_totw(league):
 
     return totw_dict
 
+def get_totw_all_ids(league):
+    round_info = requests.get(league.latest_totw_round_url).json()["rounds"]
+    totw_ids = []
+    for info in round_info:
+        link = info["link"]
+        totw = requests.get(link, headers=NO_CACHE_HEADER).json()
+        for player in totw["players"]:
+            player_id = player["participantId"]
+            totw_ids.append(player_id)
+
+    return set(totw_ids)
+
+
+
+def get_totw_player_ids(league):
+    totw = get_league_last_totw(league)
+    return [p["participantId"] for p in totw["players"]]
+
+
+class Foot(Enum):
+    LEFT = "left"
+    RIGHT = "right"
+
+
+@dataclass(frozen=True)
+class Country:
+    full_name: str
+    ccode: str
+
+
+class _Birthdate:
+    def __init__(self, year, month, day):
+        self.year = year
+        self.month = month
+        self.day = day
+
 
 class Player(_Response):
+    @dataclass(frozen=True)
+    class _BodyMeasurement:
+        unit: str
+        value: int
+
+        def __str__(self):
+            return f"{self.value} {self.unit}"
+
+    @dataclass(frozen=True)
+    class _Height(_BodyMeasurement):
+        pass
+
+    @dataclass(frozen=True)
+    class _Weight(_BodyMeasurement):
+        pass
+        
     def __init__(self, response_json):
         super().__init__(response_json)
+
+        self._player_props_json = self._response_json["playerProps"]
+        self._last_league_json = self._response_json["lastLeague"]
+        self._recent_matches_json = self._response_json["recentMatches"]
+        self._career_statistics_json = self._response_json["careerStatistics"]
+        self._career_history_json = self._response_json["careerHistory"]
+        self._related_news_json = self._response_json["relatedNews"]
+        self._meta_json = self._response_json["meta"]
+
+        self._person_json = self._meta_json["personJSONLD"]
+        self._nationality_json = self._person_json["nationality"]
+        self._affiliation_json = self._person_json["affiliation"]
+        self._height_json = self._person_json["height"]
+        self._weight_json = self._person_json["weight"]
+
+        # name
+        self._name = self._person_json["name"]
+        self._team_name = self._affiliation_json["name"]
+
+        self._birthdate = datetime.fromisoformat(self._person_json["birthDate"]).date()
+
+        self._nationality_ccode = [p for p in self._player_props_json if p.get("countryCode")][0]["countryCode"]
+        self._nationality = Country(full_name=self._nationality_json["name"], ccode=self._nationality_ccode)
+        
+        # height data
+        self._height_units = self._height_json["unitText"]
+        self._height_value = self._height_json["value"]
+        self._height = Player._Height(unit=self._height_units, value=int(self._height_value))
+        # weight data
+        self._weight_units = self._weight_json["unitText"]
+        self._weight_value = self._weight_json["value"]
+        self._weight = Player._Weight(unit=self._weight_units, value=int(self._weight_value))
+
+    @classmethod
+    def from_fotmob_id(cls, fotmob_id):
+        api = API()
+        player = api.get_player(fotmob_id)
+        return cls(player)
+    
+    def get_player_id(self):
+        return self._response_json["id"]
+    
+    def get_name(self):
+        return self._name
+    
+    def get_birthdate(self):
+        return self._birthdate
+    
+    def get_year_of_birth(self):
+        return self.get_birthdate().year
+    
+    def get_month_of_birth(self):
+        return self.get_birthdate().month
+    
+    def get_day_of_birth(self):
+        return self.get_birthdate().day
+    
+    def get_country(self):
+        return self._nationality.full_name
+    
+    def get_country_code(self):
+        return self._nationality.ccode
+
+    def get_height_string(self):
+        return str(self._height)
+
+    def get_weight_string(self):
+        return str(self._weight)
+    
+    def get_height(self):
+        return self._height.value
+
+    def get_weight(self):
+        return self._weight.value
+    
+    def get_age(self):
+        birth_delta = datetime.now().date() - self.get_birthdate()
+        return math.floor(birth_delta.days / 365)
+    
+    def get_total_senior_matches(self):
+        return sum([int(_["totalMatches"]) for _ in self._career_statistics_json])
+    
+    def is_raw(self, match_threshold=100):
+        return self.get_total_senior_matches() < match_threshold
+    
+
+def dump_player(player):
+    player_id = player.get_player_id()
+    player_timestamp = round(player._creation_time.timestamp())
+    path = f"{player_id}_{player_timestamp}"
+    with open(path, "w") as f:
+        json.dump(player._response_json, f)
 
 
 class Match(_Response):
