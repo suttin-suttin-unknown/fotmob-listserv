@@ -419,14 +419,6 @@ class Player(_Response):
         
 
     def _dump(self):
-        """
-        def dump_player(player):
-            player_id = player.get_player_id()
-            player_timestamp = round(player._creation_time.timestamp())
-            path = f"{player_id}_{player_timestamp}"
-            with open(path, "w") as f:
-                json.dump(player._response_json, f)
-        """
         with open(f"{self.player_id}_{self._get_creation_timestamp()}", "w") as f:
             json.dump(self._response_json)
 
