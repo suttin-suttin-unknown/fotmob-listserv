@@ -133,8 +133,7 @@ class _Response:
         self._creation_time = datetime.now()
         self._fotmob_id = None
 
-    @classmethod
-    def _dump(cls):
+    def _dump(self):
         raise NotImplementedError("'_dump' not implemented.")
 
     @classmethod
@@ -382,8 +381,25 @@ class Player(_Response):
         self._person_json = self._meta_json["personJSONLD"]
         self._nationality_json = self._person_json["nationality"]
         self._affiliation_json = self._person_json["affiliation"]
-        self._height_json = self._person_json["height"]
-        self._weight_json = self._person_json["weight"]
+
+        # Height data
+        self._height_json = self._person_json.get("height", {})
+        self._height_json = self._person_json.get("weight", {})
+        self._height_units = self._height_json.get("unitText", "")
+        self._height_value = self._height_json.get("value", None)
+        if not self._height_units == "" and self._height_value is not None:
+            self._Height = Player._Height(unit=self._height_units, value=int(self._height_value))
+        else:
+            self._Height = None
+
+        # Weight data
+        self._weight_json = self._person_json.get("weight", {})
+        self._weight_units = self._weight_json.get("unitText", "")
+        self._weight_value = self._weight_json.get("value", None)
+        if self._weight_units == "" and self._weight_value is not None:
+            self._weight = Player._Weight(unit=self._weight_units, value=int(self._weight_value))
+        else:
+            self._weight = None
 
         # name
         self._name = self._person_json["name"]
@@ -394,14 +410,21 @@ class Player(_Response):
         self._nationality_ccode = [p for p in self._player_props_json if p.get("countryCode")][0]["countryCode"]
         self._nationality = Country(full_name=self._nationality_json["name"], ccode=self._nationality_ccode)
         
-        # height data
-        self._height_units = self._height_json["unitText"]
-        self._height_value = self._height_json["value"]
-        self._height = Player._Height(unit=self._height_units, value=int(self._height_value))
-        # weight data
-        self._weight_units = self._weight_json["unitText"]
-        self._weight_value = self._weight_json["value"]
-        self._weight = Player._Weight(unit=self._weight_units, value=int(self._weight_value))
+
+    def _dump(self):
+        """
+        def dump_player(player):
+            player_id = player.get_player_id()
+            player_timestamp = round(player._creation_time.timestamp())
+            path = f"{player_id}_{player_timestamp}"
+            with open(path, "w") as f:
+                json.dump(player._response_json, f)
+        """
+        with open(f"{self.player_id}_{self._get_creation_timestamp()}", "w") as f:
+            json.dump(self._response_json)
+
+    def _get_creation_timestamp(self):
+        return round(self._creation_time.timestamp())
 
     @classmethod
     def from_fotmob_id(cls, fotmob_id):
@@ -455,13 +478,7 @@ class Player(_Response):
     def is_raw(self, match_threshold=100):
         return self.get_total_senior_matches() < match_threshold
     
-
-def dump_player(player):
-    player_id = player.get_player_id()
-    player_timestamp = round(player._creation_time.timestamp())
-    path = f"{player_id}_{player_timestamp}"
-    with open(path, "w") as f:
-        json.dump(player._response_json, f)
+    player_id = property(get_player_id)
 
 
 class Match(_Response):
