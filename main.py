@@ -39,7 +39,8 @@ class _RouteHandler:
                 raise ValueError(f"{function_name} is not callable")
         else:
             raise ValueError(f"Function {function_name} not found")
-            
+
+       
 class _ResponseHandler:
     def __call__(self, url, params={}, headers=NO_CACHE_HEADER):
         try:
@@ -139,8 +140,6 @@ class _Response:
     @classmethod
     def from_fotmob_id(cls, fotmob_id):
         raise NotImplementedError("'from_fotmob_id' not implemented.")
-    
-
 
 
 default_metrics_list = [
@@ -180,6 +179,9 @@ default_metrics_list = [
     "Red cards"
 ]
 
+#########
+# STATS #
+#########
 
 class StatFactory:
     def __call__(self, metric, player, team, value):
@@ -201,7 +203,10 @@ class PlayerStat:
 
     def as_dict(self):
         return asdict(self)
-        
+
+##########
+# LEAGUE #
+##########
 
 class League(_Response):
     __slots__ = ["_name", "_country", "_transfers_json", "_matches_json", "_player_stats_json"]
@@ -283,6 +288,10 @@ class League(_Response):
     latest_totw_round_url = property(_get_latest_totw_round_url)
 
 
+#######################
+# Player Stat Helpers #
+#######################
+
 def get_stat_list_string(metric, entries):
     entry_string = "\n".join([f"{entry['player']} ({entry['team']}) - {entry['value']}" for entry in entries])
     banner = "================================================"
@@ -296,7 +305,6 @@ def print_player_stats(league):
         print(f"{get_stat_list_string(metric, entries)}\n")
 
 
-# Calls in here probably good to cache
 @cached(cache=TTLCache(maxsize=100, ttl=3600))
 def get_league_last_totw(league):
     totw_dict = {}
@@ -313,6 +321,7 @@ def get_league_last_totw(league):
 
     return totw_dict
 
+
 def get_totw_all_ids(league):
     round_info = requests.get(league.latest_totw_round_url).json()["rounds"]
     totw_ids = []
@@ -324,7 +333,6 @@ def get_totw_all_ids(league):
             totw_ids.append(player_id)
 
     return set(totw_ids)
-
 
 
 def get_totw_player_ids(league):
