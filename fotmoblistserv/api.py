@@ -1,15 +1,14 @@
-from dataclasses import dataclass
-
 import requests
 import logging
 
+from dataclasses import dataclass
+from types import MappingProxyType
+
 logger = logging.getLogger(__name__)
 
-from types import MappingProxyType
 
 def handle_response(url, params={}, headers={"Cache-Control": "no-cache"}):
     try:
-        # use session?
         response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
         if hasattr(response, "json"):
@@ -78,17 +77,9 @@ class API:
             "timeZone": time_zone
         })
     
-    # TODO: Schedule searches - for players not added yet
     def search(self, term):
         return handle_response(f"{self._SEARCH_URL}suggest?term={term}")
     
-
-# def recursive_mapping_proxy(data):
-#     if isinstance(data, dict):
-#         return MappingProxyType({key: recursive_mapping_proxy(value) for key, value in data.items()})
-#     elif isinstance(data, list):
-#         return tuple(recursive_mapping_proxy(item) for item in data)
-#     return data
 
 class ImmutableDictConverter:
     def __call__(self, data):
@@ -99,17 +90,10 @@ class ImmutableDictConverter:
             return MappingProxyType({key: self._convert(value) for key, value in data.items()})
         elif isinstance(data, list):
             return tuple(self._convert(item) for item in data)
+        
         return data
     
 
 @dataclass(frozen=True)
 class APIResponse:
     response: MappingProxyType
-
-    
-
-
-
-
-    
-    

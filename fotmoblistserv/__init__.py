@@ -1,6 +1,6 @@
 import logging
 
-from .api import API, APIResponse
+from .api import *
 
 logger = logging.getLogger(__name__)
 api = API()
