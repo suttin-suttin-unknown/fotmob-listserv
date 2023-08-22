@@ -2,3 +2,4 @@ __pycache__
 .vs_code/
 venv/
 *.json
+test_script_*.py

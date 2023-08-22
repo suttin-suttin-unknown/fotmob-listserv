@@ -1,8 +1,18 @@
-import requests
+import glob
+import json
 import logging
-
+import os
+import re
+import stat
+import time
 from dataclasses import dataclass
+from functools import reduce
 from types import MappingProxyType
+
+import requests
+from cachetools import cached, TTLCache
+
+from .shared import (convert_camel_to_snake, ImmutableDictConverter as converter)
 
 logger = logging.getLogger(__name__)
 
@@ -11,11 +21,9 @@ def handle_response(url, params={}, headers={"Cache-Control": "no-cache"}):
     try:
         response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
-        if hasattr(response, "json"):
-            response_json = response.json()
-            return (lambda c: c(response_json))(ImmutableDictConverter())
-        else:
+        if not hasattr(response, "json"):
             raise ValueError(f"No JSON returned from API. See: {response.text}")
+        return response.json()
     except requests.HTTPError as error:
         logger.error(f"Error: {error}")
     except requests.exceptions.JSONDecodeError as error:
@@ -24,6 +32,13 @@ def handle_response(url, params={}, headers={"Cache-Control": "no-cache"}):
         logger.error(f"Error: {error}")
     
     return {}
+
+class ResponseHandler:
+    def __call__(self, url, params, headers):
+        return self._handle_response(url, params, headers)
+
+    def _handle_response(self, url, params, headers):
+        return handle_response(url, params=params, headers=headers)
 
 
 class API:
@@ -51,16 +66,18 @@ class API:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-            
+
     def get_matches(self, date):
         return handle_response(self._BASE_URL + f"/matches?date={date}")
     
     def get_match_details(self, match_id):
         return handle_response(self._BASE_URL + f"/matchDetails?matchId={match_id}")
     
+    @cached(TTLCache(maxsize=10, ttl=60 * 60))
     def get_player(self, player_id):
         return handle_response(self._BASE_URL + f"/playerData?id={player_id}")
     
+    @cached(TTLCache(maxsize=10, ttl=60 * 60))
     def get_league(self, league_id, time_zone="America/Los_Angeles"):
         return handle_response(self._BASE_URL + "/leagues", params={
             "id": league_id,
@@ -79,21 +96,59 @@ class API:
     
     def search(self, term):
         return handle_response(f"{self._SEARCH_URL}suggest?term={term}")
-    
 
-class ImmutableDictConverter:
-    def __call__(self, data):
-        return self._convert(data)
-    
-    def _convert(self, data):
-        if isinstance(data, dict):
-            return MappingProxyType({key: self._convert(value) for key, value in data.items()})
-        elif isinstance(data, list):
-            return tuple(self._convert(item) for item in data)
-        
-        return data
-    
 
 @dataclass(frozen=True)
-class APIResponse:
-    response: MappingProxyType
+class FotmobEntity:
+    _id: int
+    
+    def __post_init__(self):
+        self.save()
+
+    @classmethod
+    def get_api_method_name(cls):
+        return f"get_{convert_camel_to_snake(cls.__name__)}"
+
+    def get_local_file(self):
+        paths = glob.glob(f"{self._id}_*")
+        paths = [path for path in paths if re.match(r"^(\d+)_(\d+)\.json$", path)]
+        if len(paths) == 0:
+            return ""
+        return max(paths, key=os.path.getmtime)
+    
+    def get_local_data(self):
+        path = self.get_local_file()
+        if path:
+            with open(path, "r") as f:
+                return converter.to_immutable(json.load(f))
+        return MappingProxyType({})
+            
+    def get_api_data(self):
+        method = getattr(API(), self.get_api_method_name())
+        if not method:
+            raise ValueError(f"Cannot find api method for object {self.__class__.__name__}")
+        return converter.to_immutable(method(self._id))
+    
+    def get_item(self, *args):
+        return reduce(lambda d, k: d.get(k, {}), args, self.local_data)
+    
+    def should_update_local(self, force=False):
+        if force:
+            return True
+        else:
+            local_file = self.get_local_file()
+            if not local_file:
+                return True
+            else:
+                hours = (time.time() - os.stat(local_file).st_ctime) / 3600
+                return hours > 1
+
+    def save(self, force=False):
+        if self.should_update_local(force=force):
+            ts = round(time.time())
+            path = f"{self._id}_{ts}.json"
+            with open(path, "w") as f:
+                json.dump(converter.to_mutable(self.get_api_data()), f)
+                return path
+
+    local_data = property(get_local_data)
