@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import re
-import stat
 import time
 from dataclasses import dataclass
 from functools import reduce
@@ -110,10 +109,14 @@ class FotmobEntity:
         return f"get_{convert_camel_to_snake(cls.__name__)}"
 
     def get_local_file(self):
-        paths = glob.glob(f"{self._id}_*")
-        paths = [path for path in paths if re.match(r"^(\d+)_(\d+)\.json$", path)]
+        subclass = convert_camel_to_snake(self.__class__.__name__)
+        paths = glob.glob(f"{subclass}_{self._id}_*")
+        
         if len(paths) == 0:
             return ""
+        
+        pattern = re.compile(f"{subclass}_{self._id}_(\d+).json")
+        paths = [path for path in paths if re.match(pattern, path)]
         return max(paths, key=os.path.getmtime)
     
     def get_local_data(self):
@@ -132,7 +135,12 @@ class FotmobEntity:
     def get_item(self, *args):
         return reduce(lambda d, k: d.get(k, {}), args, self.local_data)
     
-    def should_update_local(self, force=False):
+    def should_update_local(self, force=False, expiry=None):
+        if not expiry:
+            expiry = 24 * 7
+
+        expiry = round(float(expiry), 1)
+        
         if force:
             return True
         else:
@@ -141,12 +149,13 @@ class FotmobEntity:
                 return True
             else:
                 hours = (time.time() - os.stat(local_file).st_ctime) / 3600
-                return hours > 1
+                return hours > expiry
 
     def save(self, force=False):
         if self.should_update_local(force=force):
             ts = round(time.time())
-            path = f"{self._id}_{ts}.json"
+            subclass = convert_camel_to_snake(self.__class__.__name__)
+            path = f"{subclass}_{self._id}_{ts}.json"
             with open(path, "w") as f:
                 json.dump(converter.to_mutable(self.get_api_data()), f)
                 return path
