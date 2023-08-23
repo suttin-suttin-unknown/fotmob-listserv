@@ -1,9 +1,31 @@
 import ast
 import click
 from collections import defaultdict
+from pprint import pprint 
 
 from fotmoblistserv.api import API
 from fotmoblistserv.objects import League, Player, Team, Transfer
+
+
+def format_data_as_strings(data):
+    col_widths = [max(len(str(item)) for item in col) for col in zip(*data)]
+    formatted_rows = []
+    border_line = "+" + "+".join("-" * (width + 2) for width in col_widths) + "+"
+    
+    # Adding uppercase header
+    header = data[0]
+    formatted_header = "|" + "|".join(str(item).upper().center(width + 2) for item, width in zip(header, col_widths)) + "|"
+    
+    formatted_rows.append(border_line)
+    formatted_rows.append(formatted_header)
+    formatted_rows.append(border_line)
+    
+    for row in data[1:]:
+        formatted_row = "|" + "|".join(" " + str(item).ljust(width) + " " for item, width in zip(row, col_widths)) + "|"
+        formatted_rows.append(formatted_row)
+        formatted_rows.append(border_line)
+    
+    return formatted_rows
 
 
 class YesNoParamType(click.ParamType):
@@ -26,7 +48,7 @@ def cli():
 @cli.command()
 @click.argument("league_id", required=True)
 @click.option("-n", "--num-apps", type=click.INT, default=None)
-def get_all_totw_players(league_id, num_apps):
+def save_all_totws(league_id, num_apps):
     league = League(league_id)
     count = 1
     totws = []
@@ -46,21 +68,16 @@ def get_all_totw_players(league_id, num_apps):
     if num_apps:
         player_groupings = dict([(k, v) for k, v in player_groupings.items() if len(v) >= num_apps])
 
-    count = 0
-    for (player_id, data) in sorted(player_groupings.items(), key=lambda v: -len(v[-1])):
-        if len(data) != count:
-            count = len(data)
-            click.echo(f"\n{count}\n")
-        name = data[0]["name"]
-        player_id = data[0]["participantId"]
-        ratings = [str(d["rating"]) for d in data]
-        click.echo(f"{name} ({player_id}): {', '.join(ratings)}")
+
+    pprint(player_groupings)
+
 
 
 @cli.command()
 @click.argument("league_id", required=True)
 @click.argument("round_id", required=False)
-def get_totw(league_id, round_id):
+@click.option("-s", "--sort-by", type=click.INT, default=3)
+def get_totw(league_id, round_id, sort_by):
     league = League(league_id)
 
     try:
@@ -72,17 +89,25 @@ def get_totw(league_id, round_id):
         click.echo(error)
         return
     
-    s = f"{league.get_name()} TOTW (Week {totw['players'][0]['roundNumber']})\n"
-    banner = "\n" + "=" * len(s) + "\n"
+    week = totw['players'][0]['roundNumber']
+    name = league.get_name()
+    country = league.get_country()
+
+    header = f"{country} - {name} TOTW (Week {week})\n"
+    banner = "\n" + "=" * len(header) + "\n"
 
     click.echo(banner)
-    click.echo(s)
-    for player in totw["players"]:
-        msg = f"{player['name']} - {player['rating']}"
-        if player["motm"] == 1:
-            msg = " ".join([msg, "(MOTM)"])
-        click.echo(msg)
-    click.echo(banner)
+    click.echo(header)
+
+    tuples = []
+    players = [Player(player["participantId"]) for player in totw["players"]]
+    players = sorted(players, key=lambda p: (p.get_age(), -p.get_total_senior_appearances()))
+    for player in players:
+        tuples.append(player.get_player_tuple())
+
+    tuples = [("name", "club", "position", "age", "apps",)] + tuples
+    table = "\n".join(map(str, format_data_as_strings(tuples)))
+    click.echo(f"{table}\n")
 
 
 @cli.command()
@@ -133,7 +158,7 @@ def add_player(search_term):
 @click.option("-e", "--contract-extension", type=click.BOOL, default=False)
 def get_transfers(team_id, transfers_in, transfers_out, on_loan, contract_extension):
     team = Team(team_id)
-    click.echo(f"{team.get_name()}\n")
+    click.echo(f"\n{team.get_name()} - Transfer Activity\n")
 
     transfers = list(Transfer.get_transfers_from_team(team))
 
@@ -164,19 +189,17 @@ def get_transfers(team_id, transfers_in, transfers_out, on_loan, contract_extens
 
     for group in transfer_list:
         if group.get("in"):
-            click.echo("Transfers in\n")
-            transfer_tuples = []
-            for transfer in group["in"]:
-                ratio = transfer.get_fee_to_value_ratio()
-                if ratio != 0:
-                    transfer_tuple = ast.literal_eval(str(transfer))
-                    transfer_tuple += (ratio,)
-                    transfer_tuples.append(transfer_tuple)
-            transfer_tuples = sorted(transfer_tuples, key=lambda d: d[-1])
-            click.echo("\n".join(map(str, transfer_tuples)))
+            tuples = [ast.literal_eval(str(transfer)) for transfer in group["in"]]
+            tuples = sorted(tuples, key=lambda t: -t[-1])
+            tuples = [("Name", "Date", "Transfer", "TF", "MV", "TF/MV",)] + tuples
+            table = "\n".join(map(str, format_data_as_strings(tuples)))
+            click.echo(f"IN: \n\n{table}\n")
         elif group.get("out"):
-            click.echo("Transfers out\n")
-            click.echo("\n".join(map(str, group["out"])))
+            tuples = [ast.literal_eval(str(transfer)) for transfer in group["out"]]
+            tuples = sorted(tuples, key=lambda t: -t[-1])
+            tuples = [("Name", "Date", "Transfer", "TF", "MV", "TF/MV",)] + tuples
+            table = "\n".join(map(str, format_data_as_strings(tuples)))
+            click.echo(f"OUT: \n\n{table}\n")
 
 
 if __name__ == '__main__':
