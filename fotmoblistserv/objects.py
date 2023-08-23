@@ -9,6 +9,8 @@ from functools import reduce
 from operator import itemgetter
 from urllib.parse import urlparse, parse_qs
 
+import pycountry
+
 from .api import handle_response, FotmobEntity
 from .shared import convert_euro_price_string
 
@@ -16,6 +18,15 @@ from .shared import convert_euro_price_string
 class League(FotmobEntity):
     def get_name(self):
         return self.get_item("details", "name")
+    
+    def get_country_code(self):
+        return self.get_item("details", "country")
+    
+    def get_country(self):
+        try:
+            return pycountry.countries.get(alpha_3=self.get_country_code()).name
+        except AttributeError:
+            return None
 
     def get_totw_for_week(self, week=0):
         week = int(week)
@@ -76,7 +87,10 @@ class League(FotmobEntity):
 
 class Player(FotmobEntity):
     def __str__(self):
-        return str(tuple([self.get_name(), self.get_club_string(), self.get_position_string(), self.get_age()]))
+        return str(self.get_player_tuple())
+
+    def get_player_tuple(self):
+        return tuple([self.get_name(), self.get_club_string(), self.get_position_string(), self.get_age(), self.get_total_senior_appearances()])
 
     def get_age(self):
         birth_date = self.get_item("meta", "personJSONLD", "birthDate")
@@ -99,12 +113,18 @@ class Player(FotmobEntity):
         return self.get_item("origin", "onLoan")
     
     def get_total_senior_appearances(self):
-        return sum([int(club["appearances"] or 0) for club in self.get_item(*[
-            "careerHistory", 
-            "careerData", 
-            "careerItems", 
-            "senior"
-        ])])
+        clubs = self.get_item("careerHistory", "careerData", "careerItems", "senior")
+        total = 0
+        for club in clubs:
+            apps = club["appearances"]
+            if not apps:
+                continue
+
+            match = re.match(r"(\d+)", club["appearances"])
+            if match:
+                total += int(match.group())
+        
+        return total
     
     def get_positions(self):
         return tuple([(p["strPosShort"]["label"], p["isMainPosition"]) for p in self.get_item(*[
@@ -127,7 +147,7 @@ class Player(FotmobEntity):
             positions += other_positions
         return "/".join(positions)
 
-    
+
 class Team(FotmobEntity):
     def get_name(self):
         return self.get_item("details", "name")
@@ -151,6 +171,7 @@ class Transfer:
     market_value_string: str
     on_loan: bool
     contract_extension: bool
+    free_agent: bool
 
     def __str__(self):
         return str(tuple([
@@ -158,11 +179,18 @@ class Transfer:
             self.get_date_string(), 
             f"{self.from_club} => {self.to_club}", 
             self.transfer_fee_string,
-            self.market_value_string
+            self.market_value_string,
+            self.get_tf_mv_ratio_string()
         ]))
     
     def get_date_string(self):
         return str(datetime.fromisoformat(self.date).date())
+
+    def get_tf_mv_ratio_string(self):
+        ratio = self.get_fee_to_value_ratio()
+        if not isinstance(ratio, (float, int)) or ratio == 0:
+            return 0
+        return ratio
 
     def get_transfer_value(self):
         try:
@@ -177,11 +205,10 @@ class Transfer:
             return 0
     
     def get_fee_to_value_ratio(self):
-        if not self.transfer_fee_string:
+        try:
+            return float(str(round(self.get_transfer_value() / self.get_market_value(), 2))[0:4])
+        except ZeroDivisionError:
             return 0
-        elif not self.get_market_value:
-            return 0
-        return self.get_transfer_value() / self.get_market_value()
     
     def is_discount(self):
         return self.get_fee_to_value_ratio() < 1
@@ -208,7 +235,8 @@ class Transfer:
             "transfer_fee_string": fee,
             "market_value_string": transfer.get("marketValue", ""),
             "on_loan": transfer["onLoan"],
-            "contract_extension": transfer["contractExtension"]
+            "contract_extension": transfer["contractExtension"],
+            "free_agent": "Free agent" in [transfer["fromClub"], transfer["toClub"]]
         }
 
     @classmethod

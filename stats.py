@@ -19,6 +19,5 @@ def get_total_stored_json_size(prefixes=possible_file_prefixes, kb=False, gb=Fal
     return round(total, 3)
     
 
-
 total = get_total_stored_json_size()
 print(f"Stored JSON size: {total:2f} MB")
